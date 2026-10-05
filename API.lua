@@ -3932,6 +3932,8 @@ local function loadPlayerDataHandler(): any
 
     -- 0. Local file check (prefers local DataHandler.lua)
     local localCandidates = {
+        "AutoTrialsFinalRespiratory/DataHandler.lua",
+        "[STAY]/AutoTrialsFinalRespiratory/DataHandler.lua",
         "[STAY]/Multiplayer/DataHandler.lua",
         "[STAY]\\Multiplayer\\DataHandler.lua",
         "Multiplayer/DataHandler.lua",
@@ -3978,6 +3980,7 @@ local function loadPlayerDataHandler(): any
 
     -- 2. Cloud fallback via loadstring (strictly non-Centurion)
     local urls = {
+        "https://raw.githubusercontent.com/Atxvy/NEWFINAL/main/DataHandler.lua",
         "https://raw.githubusercontent.com/Atxvy/-ATF-/refs/heads/main/DataHandler.lua",
     }
     for _, url in ipairs(urls) do
@@ -4363,6 +4366,7 @@ isPremiumUser = (Globals.IS_JD_PREMIUM == true)
 
 local function loadConfigRequirements(): any
     local urls = {
+        "https://raw.githubusercontent.com/Atxvy/NEWFINAL/main/PremConfigs.lua?nocache=" .. tick(),
         "https://raw.githubusercontent.com/Atxvy/AutoTrials/refs/heads/main/PremConfig.lua?nocache=" .. tick(),
     }
     for _, url in ipairs(urls) do
@@ -4380,6 +4384,8 @@ local function loadConfigRequirements(): any
     end
 
     local allowedPaths = {
+        "AutoTrialsFinalRespiratory/PremConfigs.lua",
+        "[STAY]/AutoTrialsFinalRespiratory/PremConfigs.lua",
         "[STAY]/Multiplayer/PremConfigs.lua",
         "[STAY]\\Multiplayer\\PremConfigs.lua",
         "Multiplayer/PremConfigs.lua",
