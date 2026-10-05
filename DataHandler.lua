@@ -99,8 +99,26 @@ local function getStat(name)
                         return fastVal
                     end
                 end
-                -- NOTE: We NEVER call atom:Get():await() because yielding inside a Promise
-                -- drops Luau thread identity and capability in executors.
+                -- 2. Trigger atom:Download() or atom:Get() to download cache from server
+                if type(atom.Download) == "function" then
+                    local p = atom:Download()
+                    if p and type(p.expect) == "function" then
+                        local s, r = pcall(function() return p:expect() end)
+                        if s and r ~= nil then return r end
+                    end
+                elseif type(atom.Get) == "function" then
+                    local p = atom:Get()
+                    if p and type(p.expect) == "function" then
+                        local s, r = pcall(function() return p:expect() end)
+                        if s and r ~= nil then return r end
+                    end
+                end
+                if type(atom.GetValue) == "function" then
+                    local fastVal = atom:GetValue()
+                    if fastVal ~= nil then
+                        return fastVal
+                    end
+                end
             end
             return nil
         end)
@@ -1609,10 +1627,49 @@ local StaticTrialDefinitions = {
     { Name = "HiddenEnemies", Title = "Hidden Enemies", Map = "Forgetten Docks" },
     { Name = "Inflation", Title = "Inflation", Map = "Cyber City" },
     { Name = "Jailed", Title = "Jailed", Map = "Night Station" },
+    { Name = "JailedTowers", Title = "Jailed", Map = "Night Station" },
     { Name = "Limitation", Title = "Limitation", Map = "Coral Deep" },
     { Name = "Quarantine", Title = "Quarantine", Map = "Dusty Bridges" },
     { Name = "SpeedyEnemies", Title = "Speedy Enemies", Map = "Wrecked Battlefield" },
 }
+
+local inMemoryOwnedModifiers = nil
+
+local function getOwnedModifiersList()
+    if inMemoryOwnedModifiers and type(inMemoryOwnedModifiers) == "table" and #inMemoryOwnedModifiers > 0 then
+        return inMemoryOwnedModifiers
+    end
+
+    local ownedModifiers = getCacheValue("Inventory.Modifiers")
+    if type(ownedModifiers) == "table" and #ownedModifiers > 0 then
+        inMemoryOwnedModifiers = ownedModifiers
+        return ownedModifiers
+    end
+
+    -- Check persistent file cache
+    pcall(function()
+        if isfile and readfile and HttpService then
+            for _, path in ipairs({ "CachedTrialsStatus.json", "ServiceHub/CachedTrialsStatus.json", "ProjectOptimazation/CachedTrialsStatus.json" }) do
+                if isfile(path) then
+                    local raw = readfile(path)
+                    if raw and raw ~= "" then
+                        local decoded = HttpService:JSONDecode(raw)
+                        if type(decoded) == "table" then
+                            local list = decoded.Modifiers or decoded
+                            if type(list) == "table" and #list > 0 then
+                                inMemoryOwnedModifiers = list
+                                ownedModifiers = list
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return ownedModifiers or {}
+end
 
 CombinedData.StaticTrialDefinitions = StaticTrialDefinitions
 
@@ -1633,7 +1690,7 @@ function CombinedData:GetTrialsStatus()
         end
     end
 
-    local ownedModifiers = getCacheValue("Inventory.Modifiers") or {}
+    local ownedModifiers = getOwnedModifiersList()
     if setthreadidentity then pcall(setthreadidentity, 8) end
 
     local lookup = {}
@@ -1660,7 +1717,7 @@ end
 
 function CombinedData:GetAllTrialsList()
     if setthreadidentity then pcall(setthreadidentity, 8) end
-    local ownedModifiers = getCacheValue("Inventory.Modifiers") or {}
+    local ownedModifiers = getOwnedModifiersList()
     if setthreadidentity then pcall(setthreadidentity, 8) end
 
     local lookup = {}
@@ -1722,21 +1779,25 @@ function CombinedData:IsTrialWon(trialName, playerOrTarget)
     end
 
     if setthreadidentity then pcall(setthreadidentity, 8) end
-    local ownedModifiers = getCacheValue("Inventory.Modifiers") or {}
+    local ownedModifiers = getOwnedModifiersList()
     if setthreadidentity then pcall(setthreadidentity, 8) end
 
-    local target = string.lower(trialName):gsub("%s+", "")
+    local target = string.lower(string.gsub(tostring(trialName), "[%s%p]+", ""))
     for _, mod in ipairs(ownedModifiers) do
-        local modClean = string.lower(mod):gsub("%s+", "")
-        if modClean == target then
+        local modClean = string.lower(string.gsub(tostring(mod), "[%s%p]+", ""))
+        if modClean == target or (mod == "JailedTowers" and (target == "jailed" or target == "jailedtowers")) or (target == "speedy" and modClean:find("speedy")) then
             return true
         end
     end
-    -- Also check display titles
+    -- Also check display titles and map names
     for _, t in ipairs(StaticTrialDefinitions) do
-        if string.lower(t.Name):gsub("%s+", "") == target or string.lower(t.Title):gsub("%s+", "") == target then
+        local nNorm = string.lower(string.gsub(tostring(t.Name), "[%s%p]+", ""))
+        local titNorm = string.lower(string.gsub(tostring(t.Title), "[%s%p]+", ""))
+        local mNorm = string.lower(string.gsub(tostring(t.Map), "[%s%p]+", ""))
+        if target == nNorm or target == titNorm or target == mNorm or (target == "speedy" and titNorm:find("speedy")) then
             for _, mod in ipairs(ownedModifiers) do
-                if string.lower(mod):gsub("%s+", "") == string.lower(t.Name):gsub("%s+", "") then
+                local mNormMod = string.lower(string.gsub(tostring(mod), "[%s%p]+", ""))
+                if mNormMod == nNorm or mNormMod == titNorm or (mod == "JailedTowers" and (nNorm == "jailed" or nNorm == "jailedtowers")) then
                     return true
                 end
             end

@@ -3480,6 +3480,7 @@ local StaticTrialDefinitions = {
     { Name = "HiddenEnemies", Title = "Hidden Enemies", Map = "Forgetten Docks" },
     { Name = "Inflation", Title = "Inflation", Map = "Cyber City" },
     { Name = "Jailed", Title = "Jailed", Map = "Night Station" },
+    { Name = "JailedTowers", Title = "Jailed", Map = "Night Station" },
     { Name = "Limitation", Title = "Limitation", Map = "Coral Deep" },
     { Name = "Quarantine", Title = "Quarantine", Map = "Dusty Bridges" },
     { Name = "SpeedyEnemies", Title = "Speedy Enemies", Map = "Wrecked Battlefield" },
@@ -3573,6 +3574,20 @@ local function extractOwnedModifiers(): ({ [string]: boolean }, { [string]: bool
 
     -- 2. Scan internal client cache
     if setthreadidentity then pcall(setthreadidentity, 8) end
+    pcall(function()
+        local Cache = require(ReplicatedStorage.Client.Modules.Cache)
+        local atom = Cache("Inventory.Modifiers")
+        if atom then
+            local v = atom:GetValue()
+            if not v and type(atom.Download) == "function" then
+                pcall(function() v = atom:Download():expect() end)
+            end
+            if not v and type(atom.Get) == "function" then
+                pcall(function() v = atom:Get():expect() end)
+            end
+            if v then scanTbl(v) end
+        end
+    end)
     local ownedModifiers = getCacheValue("Inventory.Modifiers")
     scanTbl(ownedModifiers)
     scanTbl(getCacheValue("Modifiers"))
@@ -7154,34 +7169,54 @@ end
 local function checkIsTrialWon(trialName: string?): boolean
     if not trialName or trialName == "" then return false end
     local normTarget = normalizeString(trialName)
+
     if PlayerDataHandler and typeof(PlayerDataHandler.IsTrialWon) == "function" then
         local ok, won = pcall(function()
             return PlayerDataHandler:IsTrialWon(trialName)
         end)
         if ok and won == true then return true end
     end
+
     if PlayerDataHandler and typeof(PlayerDataHandler.GetTrialsStatus) == "function" then
         local ok, status = pcall(function()
             return PlayerDataHandler:GetTrialsStatus()
         end)
         if ok and status and type(status) == "table" and status.Won then
             for _, n in ipairs(status.Won) do
-                if normalizeString(n) == normTarget then
+                local nNorm = normalizeString(n)
+                if nNorm == normTarget or (normTarget == "speedy" and nNorm:find("speedy")) or (normTarget == "jailed" and nNorm:find("jailed")) then
                     return true
                 end
             end
         end
     end
+
+    if typeof(extractOwnedModifiers) == "function" then
+        local lookup, normLookup = extractOwnedModifiers()
+        if lookup[trialName] or normLookup[normTarget] or (normTarget == "speedy" and normLookup["speedyenemies"]) or (normTarget == "jailed" and normLookup["jailedtowers"]) then
+            return true
+        end
+    end
+
     local trialDefs = (PlayerDataHandler and typeof(PlayerDataHandler.StaticTrialDefinitions) == "table" and PlayerDataHandler.StaticTrialDefinitions)
         or StaticTrialDefinitions
     if type(trialDefs) == "table" then
         for _, t in ipairs(trialDefs) do
-            if normalizeString(t.Name) == normTarget or normalizeString(t.Title) == normTarget or normalizeString(t.Map) == normTarget then
+            local tNameNorm = normalizeString(t.Name)
+            local tTitleNorm = normalizeString(t.Title)
+            local tMapNorm = normalizeString(t.Map)
+            if tNameNorm == normTarget or tTitleNorm == normTarget or tMapNorm == normTarget or (normTarget == "speedy" and tNameNorm:find("speedy")) then
                 if PlayerDataHandler and typeof(PlayerDataHandler.IsTrialWon) == "function" then
                     local ok, won = pcall(function()
                         return PlayerDataHandler:IsTrialWon(t.Name) or PlayerDataHandler:IsTrialWon(t.Title)
                     end)
                     if ok and won == true then return true end
+                end
+                if typeof(extractOwnedModifiers) == "function" then
+                    local lookup, normLookup = extractOwnedModifiers()
+                    if lookup[t.Name] or lookup[t.Title] or normLookup[tNameNorm] or normLookup[tTitleNorm] then
+                        return true
+                    end
                 end
             end
         end
@@ -7721,23 +7756,25 @@ local function handleAutoTrialsMatchEnd(status: string): boolean
         return true
     end
 
-    -- Free user in Auto Trials:
-    -- Win -> SmartLobby, Lose -> Smart Lobby
-    if not isPremiumUser then
+    -- Keyless mode (no key):
+    -- Free / Keyless user in Auto Trials:
+    -- Win -> SmartLobby, Lose -> Smart Lobby (returns to lobby and waits for rotation)
+    if not isKeyUser and not isPremiumUser then
         SmartTeleportToLobby()
         return true
     end
 
-    -- If Farm Only or Progression Mode is active, winning the trial means it has been beaten.
-    -- Return to lobby instead of rematching endlessly.
+    -- If Progression Mode is active, winning an unowned trial means it has been beaten.
+    -- Return to lobby to progress or wait for rotation.
     if (Globals.FarmOnly == "Farm Only" or Globals.TrialFarmMode == "Progression Mode") and status == "WIN" then
         SmartTeleportToLobby()
         return true
     end
 
-    -- Premium User ONLY in Auto Trials:
+    -- Standard Key & Premium (Auto Farm Trials):
+    -- Repeats trials over and over via RE:Rematch!
     -- Win -> stay in-game for RE:Rematch
-    -- Lose -> stay in-game for attempts 1/5
+    -- Lose -> stay in-game for retry / rematch
     return false
 end
 
@@ -10733,18 +10770,38 @@ local function buildInterface()
     -- =================== Progress Mode Tab ===================
     local ProgressTab = Window:Tab({
         Title = "Progress Mode",
-        Subtitle = "Auto Progression & Unowned Trials",
+        Subtitle = isPremiumUser and "Auto Progression & Unowned Trials" or "🔒 Premium Required",
         Icon = "Coins",
     })
 
     local ProgAutoSec = ProgressTab:Section({ Title = "Automation Controls" })
 
+    if not isPremiumUser then
+        ProgAutoSec:Label({
+            Title = "🔒 Premium Required",
+            Desc = "Progress Mode requires a VIP / Premium license.\nEnter a Premium key in the Key tab to unlock full progression & auto-purchases."
+        })
+    end
+
     local progAutoToggle = ProgAutoSec:Toggle({
         Title = "Auto Progress Mode",
         Desc = "Prioritize unowned rotation trials and auto-purchase missing items",
-        Value = (Globals.AutoTrials and Globals.TrialFarmMode == "Progression Mode"),
+        IsPrem = isPremiumUser,
+        Value = (Globals.AutoTrials and Globals.TrialFarmMode == "Progression Mode" and isPremiumUser),
         Callback = RunAsExecutor(function(val)
             if isModeSwitching then return end
+
+            if not isPremiumUser then
+                if UI.ProgAutoToggle then UI.ProgAutoToggle:SetValue(false) end
+                if Window and Window.Notify then
+                    Window:Notify({
+                        Title = "Premium Required",
+                        Desc = "Progress Mode requires a VIP / Premium license. Unlock in Key tab!",
+                        Duration = 4
+                    })
+                end
+                return
+            end
 
             if val and checkIsEverythingMaxed() then
                 if UI.ProgAutoToggle then UI.ProgAutoToggle:SetValue(false) end
